@@ -2,7 +2,7 @@ def img
 
 pipeline {
     environment {
-        registry = "nitesh99sharma/emp-portal-project"
+        registry = "https://github.com/JaiswalRohit13/Emp-Portal-Devops-Project/tree/dev"
         registryCredential = 'DOCKERHUB'
         githubCredential = 'GitHub-Creds'
         dockerImage = ''
@@ -26,7 +26,7 @@ pipeline {
                     // Checkout the project from GitHub
                     git branch: 'main',
                     credentialsId: githubCredential,
-                    url: 'https://github.com/niteshsharma99/Emp-Portal-Devops-Project.git'
+                    url: 'https://github.com/JaiswalRohit13/Emp-Portal-Devops-Project/tree/dev'
                 }
             }
         }
@@ -63,123 +63,6 @@ pipeline {
                             -Dsonar.sources=.'''
                     }
                 }
-            }
-        }
-
-        stage('SonarQube Quality Gates') {
-            steps {
-                script {
-                    withSonarQubeEnv('sonar') {
-                        timeout(time: 1, unit: 'MINUTES') {
-                            // Wait for SonarQube quality gates to pass/fail
-                            def qg = waitForQualityGate()
-                            if (qg.status != 'OK') {
-                                error "Pipeline aborted due to quality gate failure: ${qg.status}"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        stage("Testing with pytest") {
-            steps {
-                script {
-                    withPythonEnv('python3') {
-                        // Install required Python packages for testing
-                        sh 'pip install pytest'
-                        sh 'pip install flask_sqlalchemy'
-                        // Run pytest for unit testing
-                        sh 'pytest test_app.py'
-                    }
-                }
-            }
-        }
-
-        stage ('Clean Up') {
-            steps {
-                // Stop and remove Docker containers
-                sh returnStatus: true, script: 'docker stop $(docker ps -a | grep ${JOB_NAME} | awk \'{print $1}\')'
-                sh returnStatus: true, script: 'docker rmi $(docker images | grep ${registry} | awk \'{print $3}\') --force'
-                sh returnStatus: true, script: 'docker rm -f ${JOB_NAME}'
-            }
-        }
-
-        stage('Build Image') {
-            steps {
-                script {
-                    // Build Docker image with a unique tag
-                    img = registry + ":${env.BUILD_ID}"
-                    println("${img}")
-                    dockerImage = docker.build("${img}")
-                }
-            }
-        }
-
-        stage('Push To DockerHub') {
-            steps {
-                script {
-                    docker.withRegistry('https://registry.hub.docker.com', registryCredential) {
-                        // Push Docker image to DockerHub
-                        dockerImage.push()
-                    }
-                }
-            }
-        }
-
-        stage('Deploy to containers') {
-            steps {
-                // Deploy Docker image to containers
-                sh label: '', script: "docker run -d --name ${JOB_NAME} -p 5002:5000 ${img}"
-            }
-        }
-
-        stage('Deploy to Kubernetes AKS') {
-            steps {
-                script {
-                    // Print the contents of the workspace directory
-                    sh 'ls -R'
-
-                    // Retrieve the selected target cluster
-                    def kubeconfig
-                    def clusterName = "${params.TARGET_CLUSTER}".toLowerCase()
-
-                    // Set the kubeconfig based on the selected target cluster
-                    if (clusterName == 'dev') {
-                        kubeconfig = 'kubeconfig-dev-k8s'
-                    } else if (clusterName == 'prod') {
-                        kubeconfig = 'kubeconfig-prod-k8s'
-                    } else {
-                        error "Invalid target cluster selected: ${params.TARGET_CLUSTER}"
-                    }
-
-                    // Rest of your deployment steps
-                    withCredentials([file(credentialsId: kubeconfig, variable: 'KUBECONFIG')]) {
-                        sh "kubectl config view --kubeconfig=$KUBECONFIG" // View Kubernetes configuration
-                        sh "kubectl get namespaces --kubeconfig=$KUBECONFIG" // Get Kubernetes namespaces
-                        sh "sed -i 's|\${ENV_IMAGE}|${img}|g' dev/deployment.yaml" // Replace placeholder with Docker image name in deployment.yaml
-                        sh "sed -i 's|\${ENV_IMAGE}|${img}|g' prod/deployment.yaml"
-                        sh "kubectl apply -f ${clusterName}/deployment.yaml --kubeconfig=$KUBECONFIG" // Apply deployment configuration
-                        sh "kubectl apply -f ${clusterName}/service.yaml --kubeconfig=$KUBECONFIG" // Apply service configuration
-                    }
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            script {
-                def buildStatus = currentBuild.currentResult ?: 'UNKNOWN'
-                def color = buildStatus == 'SUCCESS' ? 'good' : 'danger'
-
-                slackSend(
-                    channel: '#devops-project',
-                    color: color,
-                    message: "Build ${env.BUILD_NUMBER} ${buildStatus}: Stage ${env.STAGE_NAME}",
-                    teamDomain: 'jenkinsintegr-kfn1541',
-                    tokenCredentialId: 'slack-integration'
-                )
             }
         }
     }
